@@ -1,19 +1,5 @@
 /*
- * Copyright (c) 2007-2012 Nicira, Inc.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of version 2 of the GNU General Public
- * License as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
+ * 内核层模块
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -60,13 +46,17 @@
 #include "tunnel.h"
 #include "vport-internal_dev.h"
 
+// 注意这里对内核版本的限制
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18) || \
     LINUX_VERSION_CODE >= KERNEL_VERSION(3,9,0)
 #error Kernels before 2.6.18 or after 3.8 are not supported by this version of Open vSwitch.
 #endif
 
+// 
 #define REHASH_FLOW_INTERVAL (10 * 60 * HZ)
+
 static void rehash_flow_table(struct work_struct *work);
+// 直接利用宏定义了一个work_struct ，注意体会
 static DECLARE_DELAYED_WORK(rehash_flow_wq, rehash_flow_table);
 
 int ovs_net_id __read_mostly;
@@ -2367,6 +2357,7 @@ error:
 	return err;
 }
 
+// rehash的真正执行过程
 static int __rehash_flow_table(void *dummy)
 {
 	struct datapath *dp;
@@ -2393,6 +2384,7 @@ static int __rehash_flow_table(void *dummy)
 
 
 //need to understand ,rehash as a cron job
+// 在一段时间间隔后启动这个任务
 static void rehash_flow_table(struct work_struct *work)
 {
 	genl_exec(__rehash_flow_table, NULL);
@@ -2432,6 +2424,7 @@ static struct pernet_operations ovs_net_ops = {
 	.size = sizeof(struct ovs_net),
 };
 
+//datapath模块启动后会从这里运行
 static int __init dp_init(void)
 {
 	struct sk_buff *dummy_skb;
@@ -2473,6 +2466,7 @@ static int __init dp_init(void)
 	err = dp_register_genl();
 	if (err < 0)
 		goto error_unreg_notifier;
+	// flow table rehash 的定时工作
 	schedule_delayed_work(&rehash_flow_wq, REHASH_FLOW_INTERVAL);
 
 	return 0;

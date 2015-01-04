@@ -1,4 +1,4 @@
-
+// 用户层入口点，系统初始化
 
 #include <config.h>
 
@@ -53,7 +53,7 @@ static char *parse_options(int argc, char *argv[], char **unixctl_path);
 static void usage(void) NO_RETURN;
 
 
-// 用户层入口点，系统初始化
+
 int
 main(int argc, char *argv[])
 {
