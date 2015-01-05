@@ -369,8 +369,9 @@ int ovs_dp_upcall(struct datapath *dp, struct sk_buff *skb,
 		goto err;
 	}
 
-	forward_ip_summed(skb, true);
+	forward_ip_summed(skb, true);  // do nothing
 
+	// Generic Segmentation Offload 注意理解！TODO:验证是否支持GSO
 	if (!skb_is_gso(skb))
 		err = queue_userspace_packet(ovs_dp_get_net(dp), dp_ifindex, skb, upcall_info);
 	else
@@ -437,6 +438,9 @@ static int queue_gso_packets(struct net *net, int dp_ifindex,
 	return err;
 }
 
+/*
+ * TODO
+ */
 static int queue_userspace_packet(struct net *net, int dp_ifindex,
 				  struct sk_buff *skb,
 				  const struct dp_upcall_info *upcall_info)
@@ -1527,6 +1531,10 @@ static struct genl_ops dp_flow_genl_ops[] = {
 	},
 };
 
+/*
+ *定义datapath generic netlink 消息中各个属性的类型和长度
+ * 分别是datapath的名字和PID
+ */
 static const struct nla_policy datapath_policy[OVS_DP_ATTR_MAX + 1] = {
 #ifdef HAVE_NLA_NUL_STRING
 	[OVS_DP_ATTR_NAME] = { .type = NLA_NUL_STRING, .len = IFNAMSIZ - 1 },
@@ -1534,6 +1542,14 @@ static const struct nla_policy datapath_policy[OVS_DP_ATTR_MAX + 1] = {
 	[OVS_DP_ATTR_UPCALL_PID] = { .type = NLA_U32 },
 };
 
+/* 定义datapath这个generic netlink family
+ * @id: protocol family idenfitier
+ * @hdrsize: length of user specific header in bytes
+ * @name: name of family
+ * @version: protocol version
+ * @maxattr: maximum number of attributes supported
+ * GENL_ID_GENERATE 说明是让genetlink Controller自动产生ID
+ */
 static struct genl_family dp_datapath_genl_family = {
 	.id = GENL_ID_GENERATE,
 	.hdrsize = sizeof(struct ovs_header),
@@ -1860,10 +1876,14 @@ static int ovs_dp_cmd_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	return skb->len;
 }
 
+/* 
+ * 为 datapath genl 创建相应的命令操作
+ * 一旦收到相应的消息就会执行对应的回调函数执行动作
+ */
 static struct genl_ops dp_datapath_genl_ops[] = {
 	{ .cmd = OVS_DP_CMD_NEW,
 	  .flags = GENL_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
-	  .policy = datapath_policy,
+	  .policy = datapath_policy,  /* 使用上面定义的nla_policy （line1535）*/
 	  .doit = ovs_dp_cmd_new
 	},
 	{ .cmd = OVS_DP_CMD_DEL,
@@ -2273,6 +2293,9 @@ out:
 	return skb->len;
 }
 
+/*
+ *vport generic netlink operations，命令对应着具体的回调函数
+ */
 static struct genl_ops dp_vport_genl_ops[] = {
 	{ .cmd = OVS_VPORT_CMD_NEW,
 	  .flags = GENL_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
@@ -2297,6 +2320,8 @@ static struct genl_ops dp_vport_genl_ops[] = {
 	},
 };
 
+
+// 把family ，ops和group组合起来
 struct genl_family_and_ops {
 	struct genl_family *family;
 	struct genl_ops *ops;
@@ -2304,6 +2329,9 @@ struct genl_family_and_ops {
 	struct genl_multicast_group *group;
 };
 
+/*
+ *这里定义了4种generic family
+ */
 static const struct genl_family_and_ops dp_genl_families[] = {
 	{ &dp_datapath_genl_family,
 	  dp_datapath_genl_ops, ARRAY_SIZE(dp_datapath_genl_ops),
@@ -2327,6 +2355,9 @@ static void dp_unregister_genl(int n_families)
 		genl_unregister_family(dp_genl_families[i].family);
 }
 
+/*
+ * 一旦定义好了genl family和ops就需要通过注册把它们关联起来
+ */
 static int dp_register_genl(void)
 {
 	int n_registered;
@@ -2336,14 +2367,13 @@ static int dp_register_genl(void)
 	n_registered = 0;
 	for (i = 0; i < ARRAY_SIZE(dp_genl_families); i++) {
 		const struct genl_family_and_ops *f = &dp_genl_families[i];
-
-		err = genl_register_family_with_ops(f->family, f->ops,
-						    f->n_ops);
+		/*核心*/
+		err = genl_register_family_with_ops(f->family, f->ops,f->n_ops);
 		if (err)
 			goto error;
 		n_registered++;
 
-		if (f->group) {
+		if (f->group) { // 在内核3.8中有这个函数
 			err = genl_register_mc_group(f->family, f->group);
 			if (err)
 				goto error;
