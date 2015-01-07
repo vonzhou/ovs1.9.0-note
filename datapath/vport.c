@@ -1,20 +1,3 @@
-/*
- * Copyright (c) 2007-2012 Nicira, Inc.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of version 2 of the GNU General Public
- * License as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
- */
 
 #include <linux/etherdevice.h>
 #include <linux/if.h>
@@ -35,7 +18,9 @@
 #include "vport-internal_dev.h"
 
 /* List of statically compiled vport implementations.  Don't forget to also
- * add yours to the list at the bottom of vport.h. */
+ * add yours to the list at the bottom of vport.h. 
+ * 所有vport ops的实现 
+ */
 static const struct vport_ops *base_vport_ops_list[] = {
 	&ovs_netdev_vport_ops,
 	&ovs_internal_vport_ops,
@@ -48,6 +33,9 @@ static const struct vport_ops *base_vport_ops_list[] = {
 #endif
 };
 
+/*
+ * 保存全局的 vport ops 已经初始化了
+*/
 static const struct vport_ops **vport_ops_list;
 static int n_vport_types;
 
@@ -123,6 +111,7 @@ void ovs_vport_exit(void)
 	kfree(dev_table);
 }
 
+/*对于每个设备维护了一个hash表*/
 static struct hlist_head *hash_bucket(struct net *net, const char *name)
 {
 	unsigned int hash = jhash(name, strlen(name), (unsigned long) net);
@@ -164,7 +153,8 @@ static struct kobj_type brport_ktype = {
 };
 
 /**
- *	ovs_vport_alloc - allocate and initialize new vport
+ *	研究 - ovs_vport_alloc - allocate and initialize new vport
+ * 可以看到 私有数据空间的作用， vport中的upcall_portid等字段得到了初始化
  *
  * @priv_size: Size of private data area to allocate.
  * @ops: vport device ops
@@ -185,15 +175,15 @@ struct vport *ovs_vport_alloc(int priv_size, const struct vport_ops *ops,
 		alloc_size = ALIGN(alloc_size, VPORT_ALIGN);
 		alloc_size += priv_size;
 	}
-
+	// TODO 有待研究 kzalloc
 	vport = kzalloc(alloc_size, GFP_KERNEL);
 	if (!vport)
 		return ERR_PTR(-ENOMEM);
 
 	vport->dp = parms->dp;
 	vport->port_no = parms->port_no;
-	vport->upcall_portid = parms->upcall_portid;
-	vport->ops = ops;
+	vport->upcall_portid = parms->upcall_portid;  // 关键点
+	vport->ops = ops;     // 关键点
 	INIT_HLIST_NODE(&vport->dp_hash_node);
 
 	/* Initialize kobject for bridge.  This will be added as
@@ -231,7 +221,7 @@ void ovs_vport_free(struct vport *vport)
 
 /**
  *	ovs_vport_add - add vport device (for kernel callers)
- *
+ *  研究
  * @parms: Information about new vport.
  *
  * Creates a new vport with the specified configuration (which is dependent on
@@ -249,7 +239,8 @@ struct vport *ovs_vport_add(const struct vport_parms *parms)
 		if (vport_ops_list[i]->type == parms->type) {
 			struct hlist_head *bucket;
 
-			vport = vport_ops_list[i]->create(parms);
+			vport = vport_ops_list[i]->create(parms);  // 这里！
+			// 根据具体的类型创建一个vport，工厂方法
 			if (IS_ERR(vport)) {
 				err = PTR_ERR(vport);
 				goto out;
@@ -257,6 +248,7 @@ struct vport *ovs_vport_add(const struct vport_parms *parms)
 
 			bucket = hash_bucket(ovs_dp_get_net(vport->dp),
 					     vport->ops->get_name(vport));
+			//然后把这个vport增加到这个网络设备的hash table中
 			hlist_add_head_rcu(&vport->hash_node, bucket);
 			return vport;
 		}

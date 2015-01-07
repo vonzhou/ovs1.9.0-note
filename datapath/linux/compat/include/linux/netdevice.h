@@ -111,13 +111,15 @@ static inline void netdev_rx_handler_unregister(struct net_device *dev)
 #define dev_get_by_index_rcu(net, ifindex) dev_get_by_index_rcu(ifindex)
 #endif
 
+   
+// 虽然3.8内核以后有这个函数，但是这里重新包装了
 #ifndef HAVE_DEV_GET_BY_INDEX_RCU
 static inline struct net_device *dev_get_by_index_rcu(struct net *net, int ifindex)
 {
 	struct net_device *dev;
 
-	read_lock(&dev_base_lock);
-	dev = __dev_get_by_index(net, ifindex);
+	read_lock(&dev_base_lock); // 设备链表锁
+	dev = __dev_get_by_index(net, ifindex); //dev.c
 	read_unlock(&dev_base_lock);
 
 	return dev;

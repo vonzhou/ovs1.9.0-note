@@ -88,14 +88,18 @@ static int queue_userspace_packet(struct net *, int dp_ifindex,
 				  struct sk_buff *,
 				  const struct dp_upcall_info *);
 
-/* Must be called with rcu_read_lock, genl_mutex, or RTNL lock. */
+/* 
+ * 通过ifindex得到对应的datapath实例
+Must be called with rcu_read_lock, genl_mutex, or RTNL lock. */
 static struct datapath *get_dp(struct net *net, int dp_ifindex)
 {
 	struct datapath *dp = NULL;
 	struct net_device *dev;
 
-	rcu_read_lock();
+	rcu_read_lock(); 
+	//  得到网络设备，注意：net = &init_net
 	dev = dev_get_by_index_rcu(net, dp_ifindex);
+	// 如何由 net_device 得到我们的 vport ？？
 	if (dev) {
 		struct vport *vport = ovs_internal_dev_get_vport(dev);
 		if (vport)
@@ -184,7 +188,9 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
-/* Caller must hold RTNL lock. */
+/* 
+ * datapath中接口变化信息通知上层
+Caller must hold RTNL lock. */
 static void dp_ifinfo_notify(int event, struct vport *port)
 {
 	struct sk_buff *skb;
@@ -196,7 +202,7 @@ static void dp_ifinfo_notify(int event, struct vport *port)
 		goto err;
 	}
 
-	err = dp_fill_ifinfo(skb, port, event, 0);
+	err = dp_fill_ifinfo(skb, port, event, 0);// 有待研究
 	if (err < 0) {
 		if (err == -ENODEV) {
 			goto out;
@@ -257,17 +263,21 @@ struct vport *ovs_lookup_vport(const struct datapath *dp, u16 port_no)
 	return NULL;
 }
 
-/* Called with RTNL lock and genl_lock. */
+/* 
+ * 研究
+
+Called with RTNL lock and genl_lock. */
 static struct vport *new_vport(const struct vport_parms *parms)
 {
 	struct vport *vport;
 
-	vport = ovs_vport_add(parms);
+	vport = ovs_vport_add(parms);// 构造vport并加入hash表
 	if (!IS_ERR(vport)) {
 		struct datapath *dp = parms->dp;
 		struct hlist_head *head = vport_hash_bucket(dp, vport->port_no);
 
 		hlist_add_head_rcu(&vport->dp_hash_node, head);
+		// 重要：通知用户空间？？
 		dp_ifinfo_notify(RTM_NEWLINK, vport);
 	}
 	return vport;
@@ -313,8 +323,7 @@ void ovs_dp_process_received_packet(struct vport *p, struct sk_buff *skb)
 		}
 
 		/* Look up flow. */
-		flow = ovs_flow_tbl_lookup(rcu_dereference(dp->table),
-					   &key, key_len);
+		flow = ovs_flow_tbl_lookup(rcu_dereference(dp->table), &key, key_len);
 		if (unlikely(!flow)) {
 			struct dp_upcall_info upcall;
 
@@ -322,7 +331,7 @@ void ovs_dp_process_received_packet(struct vport *p, struct sk_buff *skb)
 			upcall.key = &key;
 			upcall.userdata = NULL;
 			upcall.portid = p->upcall_portid;
-			ovs_dp_upcall(dp, skb, &upcall);
+			ovs_dp_upcall(dp, skb, &upcall);/*重点*/
 			consume_skb(skb);
 			stats_counter = &stats->n_missed;
 			goto out;
@@ -351,6 +360,9 @@ static struct genl_family dp_packet_genl_family = {
 	 SET_NETNSOK
 };
 
+/*
+ * 
+*/
 int ovs_dp_upcall(struct datapath *dp, struct sk_buff *skb,
 		  const struct dp_upcall_info *upcall_info)
 {
@@ -371,7 +383,7 @@ int ovs_dp_upcall(struct datapath *dp, struct sk_buff *skb,
 
 	forward_ip_summed(skb, true);  // do nothing
 
-	// Generic Segmentation Offload 注意理解！TODO:验证是否支持GSO
+	// Generic Segmentation Offload 注意理解！进入分支queue_userspace_packet
 	if (!skb_is_gso(skb))
 		err = queue_userspace_packet(ovs_dp_get_net(dp), dp_ifindex, skb, upcall_info);
 	else
@@ -439,7 +451,7 @@ static int queue_gso_packets(struct net *net, int dp_ifindex,
 }
 
 /*
- * TODO
+ * genl 对用户空间的响应过程
  */
 static int queue_userspace_packet(struct net *net, int dp_ifindex,
 				  struct sk_buff *skb,
@@ -468,23 +480,25 @@ static int queue_userspace_packet(struct net *net, int dp_ifindex,
 		err = -EFBIG;
 		goto out;
 	}
-
+	// 构造一个将要发给用户空间的user_skb = ovs_header + skb + flow_key
 	len = sizeof(struct ovs_header);
 	len += nla_total_size(skb->len);
 	len += nla_total_size(FLOW_BUFSIZE);
 	if (upcall_info->cmd == OVS_PACKET_CMD_ACTION)
 		len += nla_total_size(8);
-
+	//一个新的genl msg
 	user_skb = genlmsg_new(len, GFP_ATOMIC);
 	if (!user_skb) {
 		err = -ENOMEM;
 		goto out;
 	}
 
-	upcall = genlmsg_put(user_skb, 0, 0, &dp_packet_genl_family,
-			     0, upcall_info->cmd);
+	//放入一个genl header到netlink消息中，而后返回指向user specific header的指针
+	// portid=0 来自内核；seq=0
+	upcall = genlmsg_put(user_skb, 0, 0, &dp_packet_genl_family, 0, upcall_info->cmd);
+	//所以接下来直接设置这个字段
 	upcall->dp_ifindex = dp_ifindex;
-
+	//开始一个新的嵌套的attribute，存放 Nested OVS_KEY_ATTR_* attributes.
 	nla = nla_nest_start(user_skb, OVS_PACKET_ATTR_KEY);
 	ovs_flow_to_nlattrs(upcall_info->key, user_skb);
 	nla_nest_end(user_skb, nla);
@@ -492,9 +506,9 @@ static int queue_userspace_packet(struct net *net, int dp_ifindex,
 	if (upcall_info->userdata)
 		nla_put_u64(user_skb, OVS_PACKET_ATTR_USERDATA,
 			    nla_get_u64(upcall_info->userdata));
-
+	//该OVS_PACKET_ATTR_PACKET属性类型预留一定的空间，返回值是这个nlattr的头部指针
 	nla = __nla_reserve(user_skb, OVS_PACKET_ATTR_PACKET, skb->len);
-
+	// 考入skb
 	skb_copy_and_csum_dev(skb, nla_data(nla));
 
 	err = genlmsg_unicast(net, user_skb, upcall_info->portid);
@@ -1638,6 +1652,9 @@ static struct datapath *lookup_datapath(struct net *net,
 	return dp ? dp : ERR_PTR(-ENODEV);
 }
 
+/*
+ * 重要
+*/
 static int ovs_dp_cmd_new(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nlattr **a = info->attrs;
@@ -1692,12 +1709,19 @@ static int ovs_dp_cmd_new(struct sk_buff *skb, struct genl_info *info)
 	for (i = 0; i < DP_VPORT_HASH_BUCKETS; i++)
 		INIT_HLIST_HEAD(&dp->ports[i]);
 
-	/* Set up our datapath device. */
+	/* Set up our datapath device. 
+	 * 重要：是在创建datapath的时候构建internal网络设备的！
+	 Name of the network device that serves as the "local
+	* port".  This is the name of the network device whose dp_ifindex is given in
+	* the &struct ovs_header.  Always present in notifications.  Required in
+	* %OVS_DP_NEW requests.  May be used as an alternative to specifying
+	* dp_ifindex in other requests (with a dp_ifindex of 0).
+	*/
 	parms.name = nla_data(a[OVS_DP_ATTR_NAME]);
-	parms.type = OVS_VPORT_TYPE_INTERNAL;
+	parms.type = OVS_VPORT_TYPE_INTERNAL; // internal 
 	parms.options = NULL;
 	parms.dp = dp;
-	parms.port_no = OVSP_LOCAL;
+	parms.port_no = OVSP_LOCAL;  
 	parms.upcall_portid = nla_get_u32(a[OVS_DP_ATTR_UPCALL_PID]);
 
 	vport = new_vport(&parms);
@@ -2048,6 +2072,11 @@ static int change_vport(struct vport *vport,
 	return err;
 }
 
+
+/*
+ * 对于vport genl family相应命令的回调函数 增加一个vport
+ * 
+*/
 static int ovs_vport_cmd_new(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nlattr **a = info->attrs;
@@ -2069,6 +2098,7 @@ static int ovs_vport_cmd_new(struct sk_buff *skb, struct genl_info *info)
 		goto exit;
 
 	rtnl_lock();
+	// ovs_header中存的是device ifindex，据此找到 net_device 而后得到vport，返回vport.datapath
 	dp = get_dp(sock_net(skb->sk), ovs_header->dp_ifindex);
 	err = -ENODEV;
 	if (!dp)
@@ -2104,7 +2134,7 @@ static int ovs_vport_cmd_new(struct sk_buff *skb, struct genl_info *info)
 	parms.port_no = port_no;
 	parms.upcall_portid = nla_get_u32(a[OVS_VPORT_ATTR_UPCALL_PID]);
 
-	vport = new_vport(&parms);
+	vport = new_vport(&parms);// 这里
 	err = PTR_ERR(vport);
 	if (IS_ERR(vport))
 		goto exit_unlock;
@@ -2489,7 +2519,7 @@ static int __init dp_init(void)
 	if (err)
 		goto error_vport_exit;
 
-	err = register_netdevice_notifier(&ovs_dp_device_notifier);
+	err = register_netdevice_notifier(&ovs_dp_device_notifier);//已看
 	if (err)
 		goto error_netns_exit;
 

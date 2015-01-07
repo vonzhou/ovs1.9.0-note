@@ -1,19 +1,6 @@
 /*
- * Copyright (c) 2007-2012 Nicira, Inc.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of version 2 of the GNU General Public
- * License as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
+ 结合这里的代码 看Linux内核 notify机制
+ 对netdevice 通知连的监听 
  */
 
 #include <linux/netdevice.h>
@@ -28,7 +15,7 @@ static int dp_device_event(struct notifier_block *unused, unsigned long event,
 {
 	struct net_device *dev = ptr;
 	struct vport *vport;
-
+	/*OVS启动的时候 都不是internal的 所以进入else分支*/
 	if (ovs_is_internal_dev(dev))
 		vport = ovs_internal_dev_get_vport(dev);
 	else
@@ -59,7 +46,7 @@ static int dp_device_event(struct notifier_block *unused, unsigned long event,
 		}
 		break;
 
-	case NETDEV_CHANGENAME:
+	case NETDEV_CHANGENAME:   // netdevice.h
 		if (vport->port_no != OVSP_LOCAL) {
 			ovs_dp_sysfs_del_if(vport);
 			ovs_dp_sysfs_add_if(vport);

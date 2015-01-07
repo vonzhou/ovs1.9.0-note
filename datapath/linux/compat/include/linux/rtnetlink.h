@@ -55,6 +55,9 @@ static inline int lockdep_rtnl_is_held(void)
 #endif
 #endif
 
+
+
+/*3.8的内核定义的有这个  linux/rtnetlink.h */
 #ifndef rcu_dereference_rtnl
 /**
  * rcu_dereference_rtnl - rcu_dereference with debug checking

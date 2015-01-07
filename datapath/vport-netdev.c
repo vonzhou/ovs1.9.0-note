@@ -48,7 +48,9 @@ MODULE_PARM_DESC(vlan_tso, "Enable TSO for VLAN packets");
 static void netdev_port_receive(struct vport *vport, struct sk_buff *skb);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,39)
-/* Called with rcu_read_lock and bottom-halves disabled. */
+/* Called with rcu_read_lock and bottom-halves disabled. 
+ * 和内核的版本有关，得到vport，最终进入 netdev_port_receive
+*/
 static rx_handler_result_t netdev_frame_hook(struct sk_buff **pskb)
 {
 	struct sk_buff *skb = *pskb;
@@ -56,7 +58,7 @@ static rx_handler_result_t netdev_frame_hook(struct sk_buff **pskb)
 
 	if (unlikely(skb->pkt_type == PACKET_LOOPBACK))
 		return RX_HANDLER_PASS;
-
+	// skb->dev代表数据包到达或离开的网络设备，据此构造vport
 	vport = ovs_netdev_get_vport(skb->dev);
 
 	netdev_port_receive(vport, skb);
@@ -124,14 +126,18 @@ static void netdev_exit(void)
 }
 #endif
 
+/*
+ * 重要！通过相应的参数进行网络设备的注册
+ * 何时调用？
+*/
 static struct vport *netdev_create(const struct vport_parms *parms)
 {
 	struct vport *vport;
-	struct netdev_vport *netdev_vport;
+	struct netdev_vport *netdev_vport;  // 看vport_netdev.h中的定义
 	int err;
-
-	vport = ovs_vport_alloc(sizeof(struct netdev_vport),
-				&ovs_netdev_vport_ops, parms);
+	//根据具体的ovs_netdev_vport_ops和参数构造一个vport
+	// 第一个参数代表私有数据的大小，这里正是要放struct netdev_vport
+	vport = ovs_vport_alloc(sizeof(struct netdev_vport), &ovs_netdev_vport_ops, parms);
 	if (IS_ERR(vport)) {
 		err = PTR_ERR(vport);
 		goto error;
@@ -151,9 +157,12 @@ static struct vport *netdev_create(const struct vport_parms *parms)
 		err = -EINVAL;
 		goto error_put;
 	}
-
-	err = netdev_rx_handler_register(netdev_vport->dev, netdev_frame_hook,
-					 vport);
+	/* 重要！就是设置net_device两个字段  netdev_rx_handler_register - register receive handler
+     *      @dev: device to register a handler for
+     *      @rx_handler: receive handler to register
+     *      @rx_handler_data: data pointer that is used by rx handler
+	*/
+	err = netdev_rx_handler_register(netdev_vport->dev, netdev_frame_hook, vport);
 	if (err)
 		goto error_put;
 
@@ -252,7 +261,9 @@ int ovs_netdev_get_mtu(const struct vport *vport)
 	return netdev_vport->dev->mtu;
 }
 
-/* Must be called with rcu_read_lock. */
+/* Must be called with rcu_read_lock. 
+ * 
+ */
 static void netdev_port_receive(struct vport *vport, struct sk_buff *skb)
 {
 	if (unlikely(!vport))
@@ -389,7 +400,9 @@ error:
 	return 0;
 }
 
-/* Returns null if this device is not attached to a datapath. */
+/* Returns null if this device is not attached to a datapath. 
+ * IFF_OVS_DATAPATH该标志由内核驱动程序设置，表示该net_device用作ovs datapath port
+*/
 struct vport *ovs_netdev_get_vport(struct net_device *dev)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36)
@@ -398,6 +411,7 @@ struct vport *ovs_netdev_get_vport(struct net_device *dev)
 #else
 	if (likely(rcu_access_pointer(dev->rx_handler) == netdev_frame_hook))
 #endif
+		// net_device的rx_handler_data 是由 netdev_rx_handler_register设置的！
 		return (struct vport *)rcu_dereference_rtnl(dev->rx_handler_data);
 	else
 		return NULL;
@@ -406,12 +420,15 @@ struct vport *ovs_netdev_get_vport(struct net_device *dev)
 #endif
 }
 
+/*
+ * netdev_vport 的操作
+*/
 const struct vport_ops ovs_netdev_vport_ops = {
 	.type		= OVS_VPORT_TYPE_NETDEV,
 	.flags          = VPORT_F_REQUIRED,
-	.init		= netdev_init,
+	.init		= netdev_init, //2.6.36内核版本以上 do nothing
 	.exit		= netdev_exit,
-	.create		= netdev_create,
+	.create		= netdev_create,  //研究
 	.destroy	= netdev_destroy,
 	.set_addr	= ovs_netdev_set_addr,
 	.get_name	= ovs_netdev_get_name,

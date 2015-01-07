@@ -154,9 +154,10 @@ static void internal_dev_destructor(struct net_device *dev)
 	free_netdev(dev);
 }
 
+// 研究
 #ifdef HAVE_NET_DEVICE_OPS
 static const struct net_device_ops internal_dev_netdev_ops = {
-	.ndo_open = internal_dev_open,
+	.ndo_open = internal_dev_open,   // 网络设备up的时候会调用
 	.ndo_stop = internal_dev_stop,
 	.ndo_start_xmit = internal_dev_xmit,
 	.ndo_set_mac_address = internal_dev_mac_addr,
@@ -170,12 +171,15 @@ static const struct net_device_ops internal_dev_netdev_ops = {
 };
 #endif
 
+/*
+ * 分配网络设备之后的初始化函数
+*/
 static void do_setup(struct net_device *netdev)
 {
-	ether_setup(netdev);
+	ether_setup(netdev);  // 先利用Ethernet完成一部分工作
 
 #ifdef HAVE_NET_DEVICE_OPS
-	netdev->netdev_ops = &internal_dev_netdev_ops;
+	netdev->netdev_ops = &internal_dev_netdev_ops;  // 设置操作集合
 #else
 	netdev->do_ioctl = internal_dev_do_ioctl;
 	netdev->get_stats = internal_dev_sys_stats;
@@ -202,9 +206,15 @@ static void do_setup(struct net_device *netdev)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,39)
 	netdev->hw_features = netdev->features & ~NETIF_F_LLTX;
 #endif
+	//随机分配一个mac地址
 	eth_hw_addr_random(netdev);
 }
 
+
+/*
+ * 重要：在这里进行ovs中这个 internal 网络设备的注册
+ * 从哪里执行到这里？
+*/
 static struct vport *internal_dev_create(const struct vport_parms *parms)
 {
 	struct vport *vport;
@@ -212,6 +222,8 @@ static struct vport *internal_dev_create(const struct vport_parms *parms)
 	struct internal_dev *internal_dev;
 	int err;
 
+	// 第一个参数是私有域的大小，存放的是 struct netdev_vport，包装着net_device
+	// 由参数构造了很多信息
 	vport = ovs_vport_alloc(sizeof(struct netdev_vport),
 				&ovs_internal_vport_ops, parms);
 	if (IS_ERR(vport)) {
@@ -221,26 +233,28 @@ static struct vport *internal_dev_create(const struct vport_parms *parms)
 
 	netdev_vport = netdev_vport_priv(vport);
 
-	netdev_vport->dev = alloc_netdev(sizeof(struct internal_dev),
-					 parms->name, do_setup);
+	//重要：分配一个网络设备，私有域就是vport，然后设置名字 和 初始化函数
+	netdev_vport->dev = alloc_netdev(sizeof(struct internal_dev), parms->name, do_setup);
 	if (!netdev_vport->dev) {
 		err = -ENOMEM;
 		goto error_free_vport;
 	}
-
+	// 给这个网络设备设置 net
 	dev_net_set(netdev_vport->dev, ovs_dp_get_net(vport->dp));
 	internal_dev = internal_dev_priv(netdev_vport->dev);
 	internal_dev->vport = vport;
 
-	/* Restrict bridge port to current netns. */
+	/* Restrict bridge port to current netns. ？？*/
 	if (vport->port_no == OVSP_LOCAL)
 		netdev_vport->dev->features |= NETIF_F_NETNS_LOCAL;
-
+	// 注册这个网络设备
 	err = register_netdevice(netdev_vport->dev);
 	if (err)
 		goto error_free_netdev;
 
+	// 设为混杂模式
 	dev_set_promiscuity(netdev_vport->dev, 1);
+	// 开始传输
 	netif_start_queue(netdev_vport->dev);
 
 	return vport;
@@ -294,6 +308,7 @@ static int internal_dev_recv(struct vport *vport, struct sk_buff *skb)
 	return len;
 }
 
+// 
 const struct vport_ops ovs_internal_vport_ops = {
 	.type		= OVS_VPORT_TYPE_INTERNAL,
 	.flags		= VPORT_F_REQUIRED | VPORT_F_FLOW,
@@ -313,17 +328,21 @@ const struct vport_ops ovs_internal_vport_ops = {
 
 int ovs_is_internal_dev(const struct net_device *netdev)
 {
+	//2.6.37的内核有 netdevice.h line711，3.8以后的内核没有这个
 #ifdef HAVE_NET_DEVICE_OPS
 	return netdev->netdev_ops == &internal_dev_netdev_ops;
 #else
-	return netdev->open == internal_dev_open;
+	return netdev->open == internal_dev_open;  // 所以看这里即可
 #endif
 }
 
+
+// 研究：通过一个net_device 找到对应的ov中的vport结构
+// internal的设备 （而不是里面的Interface）
 struct vport *ovs_internal_dev_get_vport(struct net_device *netdev)
 {
 	if (!ovs_is_internal_dev(netdev))
 		return NULL;
-
+	// 那么是啥时候放到里面的呢？
 	return internal_dev_priv(netdev)->vport;
 }

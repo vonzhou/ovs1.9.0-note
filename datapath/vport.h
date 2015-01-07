@@ -80,11 +80,11 @@ struct vport {
 	struct datapath	*dp;
 	struct kobject kobj;
 	char linkname[IFNAMSIZ];
-	u32 upcall_portid;
+	u32 upcall_portid;   // 和用户空间沟通的netlink port
 
 	struct hlist_node hash_node;
 	struct hlist_node dp_hash_node;
-	const struct vport_ops *ops;
+	const struct vport_ops *ops;  // 对应的vport的操作集合
 
 	struct vport_percpu_stats __percpu *percpu_stats;
 
