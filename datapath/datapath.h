@@ -42,6 +42,7 @@
 /**
  * struct dp_stats_percpu - per-cpu packet processing statistics for a given
  * datapath.
+ datapath统计字段是每CPU变量
  * @n_hit: Number of received packets for which a matching flow was found in
  * the flow table.
  * @n_miss: Number of received packets that had no matching flow in the flow
